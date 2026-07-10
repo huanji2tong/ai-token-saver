@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
+from .privacy import is_sensitive_path, redact_path_text, redact_sensitive_text
+
 
 DEFAULT_IGNORES = {
     ".git",
@@ -68,6 +70,7 @@ class TextFile:
     rel_path: str
     text: str
     bytes_read: int
+    redactions: int = 0
 
 
 def iter_text_files(
@@ -105,8 +108,15 @@ def read_text_file(path: Path, *, root: Path, max_file_bytes: int) -> TextFile |
         except UnicodeDecodeError:
             return None
 
-    rel_path = _safe_relative(path, root)
-    return TextFile(path=path, rel_path=rel_path, text=text, bytes_read=len(raw))
+    redaction = redact_sensitive_text(text)
+    rel_path_report = redact_path_text(_safe_relative(path, root))
+    return TextFile(
+        path=path,
+        rel_path=rel_path_report.text,
+        text=redaction.text,
+        bytes_read=len(raw),
+        redactions=redaction.replacements + rel_path_report.replacements,
+    )
 
 
 def _walk_dir(path: Path, *, root: Path, max_file_bytes: int) -> Iterator[TextFile]:
@@ -121,7 +131,9 @@ def _walk_dir(path: Path, *, root: Path, max_file_bytes: int) -> Iterator[TextFi
 
 
 def _should_ignore(path: Path) -> bool:
-    return any(part in DEFAULT_IGNORES or part.endswith(".egg-info") for part in path.parts)
+    if any(part in DEFAULT_IGNORES or part.endswith(".egg-info") for part in path.parts):
+        return True
+    return is_sensitive_path(path)
 
 
 def _safe_relative(path: Path, root: Path) -> str:
