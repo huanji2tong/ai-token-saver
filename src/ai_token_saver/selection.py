@@ -244,9 +244,10 @@ def select_chunks(
     used = 0
     seen: list[frozenset[str]] = []
     min_tokens = 16 if mode == "aggressive" else 24
+    query_terms = set(_terms(query))
 
     for chunk in scored:
-        if chunk.tokens < min_tokens:
+        if chunk.tokens < min_tokens and not _allow_small_high_signal(chunk, query_terms):
             continue
         if used + chunk.tokens > budget_tokens:
             continue
@@ -258,6 +259,15 @@ def select_chunks(
 
     selected.sort(key=lambda item: (item.path, item.start_line, item.kind))
     return selected
+
+
+def _allow_small_high_signal(chunk: ContextChunk, query_terms: set[str]) -> bool:
+    if chunk.kind not in {"code-symbol", "code-skeleton", "heading"}:
+        return False
+    if not query_terms:
+        return False
+    path_terms = set(_terms(Path(chunk.path).as_posix().replace("/", " ")))
+    return bool(query_terms & (chunk.fingerprint | path_terms))
 
 
 def squeeze_text(
