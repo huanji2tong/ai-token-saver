@@ -11,6 +11,7 @@ from .files import iter_text_files
 from .metrics import analyze_loss
 from .optimizer import compact_text
 from .packer import build_context_pack
+from .privacy import is_sensitive_path, redact_path_text, redact_sensitive_text
 from .render import build_shotpack
 from .tokenizer import estimate_tokens, token_savings
 
@@ -22,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    audit = subparsers.add_parser("audit", help="Estimate token hotspots in files or directories.")
+    audit = subparsers.add_parser("audit", help="Estimate privacy-filtered token hotspots in files or directories.")
     audit.add_argument("paths", nargs="*", default=["."], help="Files or directories to scan.")
     audit.add_argument("--root", default=".", help="Root directory used for relative paths.")
     audit.add_argument("--model", default=None, help="Optional tokenizer model name if tiktoken is installed.")
@@ -41,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     trim.add_argument("--strategy", choices=["clean", "extractive"], default="clean", help="Compaction strategy.")
     trim.add_argument("--budget", type=int, help="Target token budget for extractive compaction.")
     trim.add_argument("--query", default="", help="Task/query used to keep relevant evidence.")
+    trim.add_argument("--no-redact", action="store_true", help="Disable built-in secret and PII redaction.")
+    trim.add_argument(
+        "--allow-sensitive-path",
+        action="store_true",
+        help="Allow direct reads from sensitive paths such as credentials or private key files.",
+    )
     trim.add_argument("--json", action="store_true", help="Print report as JSON to stderr.")
     trim.set_defaults(func=_cmd_trim)
 
@@ -52,10 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     pack.add_argument("--model", default=None, help="Optional tokenizer model name if tiktoken is installed.")
     pack.add_argument("--max-file-bytes", type=int, default=200_000, help="Skip files larger than this.")
     pack.add_argument("--query", default="", help="Task/query used for evidence scoring.")
-    pack.add_argument("--mode", choices=["balanced", "aggressive"], default="balanced", help="Packing aggressiveness.")
+    pack.add_argument("--mode", choices=["balanced", "aggressive"], default="balanced", help="Packing aggressiveness. Default: balanced.")
     pack.set_defaults(func=_cmd_pack)
 
-    measure = subparsers.add_parser("measure", help="Report compression savings and loss proxy metrics.")
+    measure = subparsers.add_parser("measure", help="Report compression savings and loss proxy metrics on eligible input.")
     measure.add_argument("paths", nargs="*", default=["."], help="Files or directories to measure.")
     measure.add_argument("--root", default=".", help="Root directory used for relative paths.")
     measure.add_argument("-b", "--budget", type=int, default=8000, help="Target token budget.")
@@ -73,7 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     shotpack.add_argument("-o", "--output-dir", default="shotpack", help="Output directory for markdown, PNGs, and manifest.")
     shotpack.add_argument("--stem", default="context", help="Output filename stem.")
     shotpack.add_argument("--query", default="", help="Task/query used for evidence scoring.")
-    shotpack.add_argument("--mode", choices=["balanced", "aggressive"], default="aggressive", help="Packing aggressiveness.")
+    shotpack.add_argument(
+        "--mode",
+        choices=["balanced", "aggressive"],
+        default="aggressive",
+        help="Packing aggressiveness. Default: aggressive for denser screenshot pages.",
+    )
     shotpack.add_argument("--model", default=None, help="Optional tokenizer model name if tiktoken is installed.")
     shotpack.add_argument("--max-file-bytes", type=int, default=200_000, help="Skip files larger than this.")
     shotpack.add_argument("--image-width", type=int, default=1800, help="PNG page width.")
@@ -91,6 +103,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     rows = []
     total_raw = 0
     total_compact = 0
+    total_redactions = 0
 
     for text_file in iter_text_files(args.paths, root=root, max_file_bytes=args.max_file_bytes):
         raw = estimate_tokens(text_file.text, model=args.model)
@@ -99,28 +112,33 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         rows.append(
             {
                 "path": text_file.rel_path,
+                "eligible_tokens": raw.tokens,
                 "raw_tokens": raw.tokens,
                 "compact_tokens": compacted.compact_tokens,
                 "saved_tokens": saved,
                 "saved_percent": pct,
                 "bytes": text_file.bytes_read,
                 "backend": raw.backend,
+                "redactions": text_file.redactions,
             }
         )
         total_raw += raw.tokens
         total_compact += compacted.compact_tokens
+        total_redactions += text_file.redactions
 
     rows.sort(key=lambda item: item["raw_tokens"], reverse=True)
     saved, pct = token_savings(total_raw, total_compact)
     report = {
         "budget": args.budget,
         "price_per_million": args.price_per_million,
+        "eligible_tokens": total_raw,
         "raw_tokens": total_raw,
         "compact_tokens": total_compact,
         "saved_tokens": saved,
         "saved_percent": pct,
         "estimated_raw_cost": total_raw / 1_000_000 * args.price_per_million,
         "estimated_compact_cost": total_compact / 1_000_000 * args.price_per_million,
+        "redactions": total_redactions,
         "files": rows,
     }
 
@@ -129,21 +147,42 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Scanned {len(rows)} text files")
-    print(f"Raw: {total_raw:,} tokens | Compact: {total_compact:,} tokens | Saved: {saved:,} ({pct:.1f}%)")
+    print(f"Eligible source: {total_raw:,} tokens | Compact: {total_compact:,} tokens | Saved: {saved:,} ({pct:.1f}%)")
     print(
         "Estimated input cost: "
         f"${report['estimated_raw_cost']:.4f} -> ${report['estimated_compact_cost']:.4f} "
         f"at ${args.price_per_million:g}/1M tokens"
     )
+    if total_redactions:
+        print(f"Privacy filter redacted {total_redactions} secret/PII match(es).")
     print()
     print(_table(rows[:30]))
     if len(rows) > 30:
-        print(f"\nShowing top 30 of {len(rows)} files by raw token count.")
+        print(f"\nShowing top 30 of {len(rows)} files by eligible token count.")
     return 0
 
 
 def _cmd_trim(args: argparse.Namespace) -> int:
-    text = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8")
+    if args.input == "-":
+        text = sys.stdin.read()
+    else:
+        input_path = Path(args.input)
+        if is_sensitive_path(input_path) and not args.allow_sensitive_path:
+            safe_path = redact_path_text(str(input_path)).text
+            print(
+                f"Refusing to trim sensitive path by default: {safe_path}. "
+                "Use --allow-sensitive-path only when you intentionally want to process it.",
+                file=sys.stderr,
+            )
+            return 2
+        text = input_path.read_text(encoding="utf-8")
+    redactions = 0
+    if not args.no_redact:
+        redaction = redact_sensitive_text(text)
+        text = redaction.text
+        redactions = redaction.replacements
+    if args.strategy == "extractive" and args.budget is None:
+        print("Extractive mode needs --budget; falling back to clean compaction.", file=sys.stderr)
     result = compact_text(
         text,
         head_lines=args.head_lines,
@@ -160,12 +199,14 @@ def _cmd_trim(args: argparse.Namespace) -> int:
         print(result.text, end="")
 
     report = {
+        "eligible_tokens": result.original_tokens,
         "raw_tokens": result.original_tokens,
         "compact_tokens": result.compact_tokens,
         "saved_tokens": result.saved_tokens,
         "saved_percent": result.saved_percent,
         "notes": list(result.notes),
         "backend": result.backend,
+        "redactions": redactions,
     }
     if args.json:
         print(json.dumps(report, indent=2), file=sys.stderr)
@@ -175,6 +216,8 @@ def _cmd_trim(args: argparse.Namespace) -> int:
             f"using {result.backend}.",
             file=sys.stderr,
         )
+        if redactions:
+            print(f"Privacy filter redacted {redactions} secret/PII match(es).", file=sys.stderr)
     return 0
 
 
@@ -192,7 +235,7 @@ def _cmd_pack(args: argparse.Namespace) -> int:
     output.write_text(result.markdown, encoding="utf-8")
     print(f"Wrote {output}")
     print(
-        f"Raw: {result.source_tokens:,} tokens | Pack: {result.packed_tokens:,} tokens | "
+        f"Eligible source: {result.source_tokens:,} tokens | Pack: {result.packed_tokens:,} tokens | "
         f"Saved: {result.saved_tokens:,} ({result.saved_percent:.1f}%)"
     )
     print(f"Files: {len(result.files)} | Counter: {result.backend}")
@@ -213,7 +256,7 @@ def _cmd_measure(args: argparse.Namespace) -> int:
         print(json.dumps(report.as_dict(), indent=2))
         return 0
 
-    print(f"Raw: {report.source_tokens:,} tokens")
+    print(f"Eligible source: {report.source_tokens:,} tokens")
     print(f"Pack: {report.packed_tokens:,} tokens")
     print(f"Saved: {report.saved_tokens:,} tokens ({report.saved_percent:.1f}%)")
     print(f"Token removal: {report.token_removal_percent:.1f}%")
@@ -252,7 +295,7 @@ def _cmd_shotpack(args: argparse.Namespace) -> int:
     print(f"Wrote {result.manifest_path}")
     print(f"Rendered {len(result.pages)} PNG page(s) in {result.output_dir}")
     print(
-        f"Text stage: {result.source_tokens:,} -> {result.text_pack_tokens:,} tokens "
+        f"Eligible source stage: {result.source_tokens:,} -> {result.text_pack_tokens:,} tokens "
         f"({result.text_saved_percent:.1f}% saved before screenshot rendering)"
     )
     print("Use PNG pages for visual bulk context; keep the markdown for exact strings/code.")
@@ -262,7 +305,7 @@ def _cmd_shotpack(args: argparse.Namespace) -> int:
 def _table(rows: list[dict[str, object]]) -> str:
     if not rows:
         return "No text files found."
-    headers = ("tokens", "compact", "saved", "file")
+    headers = ("eligible", "compact", "saved", "file")
     rendered = [headers]
     for row in rows:
         rendered.append(
