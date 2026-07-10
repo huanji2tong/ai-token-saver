@@ -286,6 +286,8 @@ class TokenSaverTests(unittest.TestCase):
         self.assertNotIn("sk-proj-", result.markdown)
         self.assertNotIn("person@example.test", result.markdown)
         self.assertIn("Query-guided scoring: yes", result.markdown)
+        self.assertNotIn("sk-proj-", result.body_markdown)
+        self.assertNotIn("person@example.test", result.body_markdown)
 
     def test_measure_reports_skip_counts(self):
         tmp_path = Path(self.enterContext(TempDirectory()))
@@ -350,7 +352,7 @@ class TokenSaverTests(unittest.TestCase):
             query="VERY_RELEVANT_NEEDLE evidence budget token",
         )
 
-        self.assertLess(report.query_term_recall_percent, 100.0)
+        self.assertEqual(report.query_term_recall_percent, 0.0)
 
     def test_measure_empty_dir_reports_summary_growth_not_fake_removal(self):
         tmp_path = Path(self.enterContext(TempDirectory()))
