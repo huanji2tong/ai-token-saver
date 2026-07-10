@@ -135,7 +135,7 @@ def build_context_pack(
             chunks=1,
         )
 
-    markdown, final_tokens, saved, pct = _assemble_markdown(
+    markdown, body_markdown, final_tokens, saved, pct = _assemble_markdown(
         body=body,
         budget_tokens=budget_tokens,
         source_tokens=source_tokens,
@@ -149,7 +149,7 @@ def build_context_pack(
 
     return PackResult(
         markdown=markdown,
-        body_markdown=body,
+        body_markdown=body_markdown,
         files=tuple(packed_files),
         skipped_paths=scan.skipped,
         source_tokens=source_tokens,
@@ -171,7 +171,7 @@ def _assemble_markdown(
     query: str,
     mode: str,
     model: str | None,
-) -> tuple[str, int, int, float]:
+) -> tuple[str, str, int, int, float]:
     body_for_output = body
     marker = ""
     final_tokens = 0
@@ -213,12 +213,12 @@ def _assemble_markdown(
             final_markdown = truncate_to_token_budget(summary, budget_tokens, model=model)
             final_tokens = estimate_tokens(final_markdown, model=model).tokens
             saved, pct = token_savings(source_tokens, final_tokens)
-            return final_markdown, final_tokens, saved, pct
+            return final_markdown, "", final_tokens, saved, pct
 
         markdown = summary + marker + body_for_output
         measured_tokens = estimate_tokens(markdown, model=model).tokens
         if measured_tokens == final_tokens and measured_tokens <= budget_tokens:
-            return markdown, measured_tokens, saved, pct
+            return markdown, body_for_output, measured_tokens, saved, pct
 
         final_tokens = measured_tokens
         if final_tokens <= budget_tokens:
@@ -261,7 +261,7 @@ def _assemble_markdown(
     final_markdown = truncate_to_token_budget(markdown, budget_tokens, model=model)
     final_tokens = estimate_tokens(final_markdown, model=model).tokens
     saved, pct = token_savings(source_tokens, final_tokens)
-    return final_markdown, final_tokens, saved, pct
+    return final_markdown, body_for_output, final_tokens, saved, pct
 
 
 def _fit_summary(
