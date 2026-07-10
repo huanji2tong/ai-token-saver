@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass
-from collections import defaultdict
 from pathlib import Path
 import re
 
-from .files import iter_text_files
+from .files import SkippedPath, scan_text_files
 from .optimizer import compact_text, truncate_to_token_budget
 from .selection import ContextChunk, build_chunks, make_code_skeleton, select_chunks
 from .tokenizer import estimate_tokens, token_savings
@@ -33,6 +33,7 @@ class PackedFile:
 class PackResult:
     markdown: str
     files: tuple[PackedFile, ...]
+    skipped_paths: tuple[SkippedPath, ...]
     source_tokens: int
     packed_tokens: int
     saved_tokens: int
@@ -50,7 +51,8 @@ def build_context_pack(
     query: str = "",
     mode: str = "balanced",
 ) -> PackResult:
-    files = list(iter_text_files(paths, root=root, max_file_bytes=max_file_bytes))
+    scan = scan_text_files(paths, root=root, max_file_bytes=max_file_bytes)
+    files = list(scan.files)
     packed_files: list[PackedFile] = []
     source_tokens = 0
     backend = "heuristic"
@@ -137,6 +139,7 @@ def build_context_pack(
         budget_tokens=budget_tokens,
         source_tokens=source_tokens,
         files=packed_files,
+        skipped_paths=scan.skipped,
         backend=backend,
         query=query,
         mode=mode,
@@ -146,6 +149,7 @@ def build_context_pack(
     return PackResult(
         markdown=markdown,
         files=tuple(packed_files),
+        skipped_paths=scan.skipped,
         source_tokens=source_tokens,
         packed_tokens=final_tokens,
         saved_tokens=saved,
@@ -160,6 +164,7 @@ def _assemble_markdown(
     budget_tokens: int,
     source_tokens: int,
     files: list[PackedFile],
+    skipped_paths: tuple[SkippedPath, ...],
     backend: str,
     query: str,
     mode: str,
@@ -180,6 +185,7 @@ def _assemble_markdown(
             saved_tokens=saved,
             saved_percent=pct,
             files=files,
+            skipped_paths=skipped_paths,
             backend=backend,
             query=query,
             mode=mode,
@@ -206,6 +212,7 @@ def _assemble_markdown(
         saved_tokens=saved,
         saved_percent=pct,
         files=files,
+        skipped_paths=skipped_paths,
         backend=backend,
         query=query,
         mode=mode,
@@ -222,6 +229,7 @@ def _summary(
     saved_tokens: int,
     saved_percent: float,
     files: list[PackedFile],
+    skipped_paths: tuple[SkippedPath, ...],
     backend: str,
     query: str,
     mode: str,
@@ -240,12 +248,20 @@ def _summary(
         f"- Strategy: evidence-first/{mode}",
         f"- Query: {query or '(none; structure-only scoring)'}",
         f"- Files: {selected} selected, {truncated} truncated, {skipped} skipped",
-        "",
-        "## File Index",
-        "",
-        "| file | status | chunks | eligible tokens | packed tokens | notes |",
-        "| --- | --- | ---: | ---: | ---: | --- |",
     ]
+    if skipped_paths:
+        counts = Counter(item.reason for item in skipped_paths)
+        reasons = ", ".join(f"{reason}={counts[reason]}" for reason in sorted(counts))
+        rows.append(f"- Skipped before scoring: {len(skipped_paths)} path(s) ({reasons})")
+    rows.extend(
+        [
+            "",
+            "## File Index",
+            "",
+            "| file | status | chunks | eligible tokens | packed tokens | notes |",
+            "| --- | --- | ---: | ---: | ---: | --- |",
+        ]
+    )
     for item in files:
         notes = "; ".join(item.notes) if item.notes else ""
         rows.append(
