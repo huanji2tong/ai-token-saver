@@ -129,10 +129,15 @@ def analyze_loss(
         token_retention = min(1.0, pack.packed_tokens / pack.source_tokens)
         token_growth_tokens = max(0, pack.packed_tokens - pack.source_tokens)
         token_growth_percent = (token_growth_tokens / pack.source_tokens) * 100 if token_growth_tokens else 0.0
+    elif pack.packed_tokens:
+        token_retention = 0.0
+        token_growth_tokens = pack.packed_tokens
+        token_growth_percent = 0.0
     else:
         token_retention = 0.0
         token_growth_tokens = 0
         token_growth_percent = 0.0
+    token_removal_percent = 0.0 if not pack.source_tokens else max(0.0, (1 - token_retention) * 100)
 
     return LossReport(
         source_tokens=pack.source_tokens,
@@ -142,7 +147,7 @@ def analyze_loss(
         token_growth_tokens=token_growth_tokens,
         token_growth_percent=token_growth_percent,
         token_retention_percent=token_retention * 100,
-        token_removal_percent=(1 - token_retention) * 100,
+        token_removal_percent=token_removal_percent,
         query_term_recall_percent=query_recall * 100,
         symbol_recall_percent=symbol_recall * 100,
         file_coverage_percent=file_coverage * 100,
