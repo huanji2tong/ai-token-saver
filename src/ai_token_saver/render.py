@@ -24,6 +24,8 @@ class ShotpackResult:
     markdown_path: Path
     manifest_path: Path
     pages: tuple[ImagePage, ...]
+    skipped_paths: int
+    skip_counts: dict[str, int]
     source_tokens: int
     text_pack_tokens: int
     text_saved_percent: float
@@ -73,6 +75,8 @@ def build_shotpack(
         "source_tokens": pack.source_tokens,
         "text_pack_tokens": pack.packed_tokens,
         "text_saved_percent": pack.saved_percent,
+        "skipped_paths": len(pack.skipped_paths),
+        "skip_counts": _skip_counts(pack.skipped_paths),
         "query": query,
         "mode": mode,
         "loss_note": (
@@ -87,6 +91,8 @@ def build_shotpack(
         markdown_path=markdown_path,
         manifest_path=manifest_path,
         pages=tuple(pages),
+        skipped_paths=len(pack.skipped_paths),
+        skip_counts=_skip_counts(pack.skipped_paths),
         source_tokens=pack.source_tokens,
         text_pack_tokens=pack.packed_tokens,
         text_saved_percent=pack.saved_percent,
@@ -173,3 +179,11 @@ def _load_font(ImageFont, font_size: int):
         if path.exists():
             return ImageFont.truetype(str(path), font_size)
     return ImageFont.load_default()
+
+
+def _skip_counts(skipped_paths: tuple[object, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in skipped_paths:
+        reason = str(getattr(item, "reason"))
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
