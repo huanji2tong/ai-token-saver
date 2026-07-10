@@ -32,6 +32,7 @@ class PackedFile:
 @dataclass(frozen=True)
 class PackResult:
     markdown: str
+    body_markdown: str
     files: tuple[PackedFile, ...]
     skipped_paths: tuple[SkippedPath, ...]
     source_tokens: int
@@ -148,6 +149,7 @@ def build_context_pack(
 
     return PackResult(
         markdown=markdown,
+        body_markdown=body,
         files=tuple(packed_files),
         skipped_paths=scan.skipped,
         source_tokens=source_tokens,
