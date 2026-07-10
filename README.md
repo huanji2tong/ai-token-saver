@@ -292,6 +292,11 @@ ai-token-saver measure . \
   --mode aggressive
 ```
 
+`measure` now reports how many paths were skipped before scoring and why, so
+coverage drops are easier to interpret. When a tiny input grows because pack
+overhead dominates, `measure` reports that as net growth instead of emitting
+impossible negative removal percentages.
+
 ### `shotpack`
 
 Generate a markdown context pack plus PNG pages. The default mode is
