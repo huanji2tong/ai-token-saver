@@ -1,7 +1,7 @@
 import io
 from pathlib import Path
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 
 from ai_token_saver.cli import main
 from ai_token_saver.optimizer import compact_text
@@ -10,7 +10,7 @@ from ai_token_saver.metrics import analyze_loss
 from ai_token_saver.privacy import is_sensitive_path, redact_sensitive_text
 from ai_token_saver.render import render_text_pages
 from ai_token_saver.selection import ContextChunk, make_code_skeleton, select_chunks
-from ai_token_saver.files import TextFile, iter_text_files
+from ai_token_saver.files import TextFile, iter_text_files, scan_text_files
 from ai_token_saver.tokenizer import estimate_tokens
 
 
@@ -222,6 +222,43 @@ class TokenSaverTests(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].rel_path, "<REDACTED:EMAIL>.txt")
         self.assertGreater(files[0].redactions, 0)
+
+    def test_scan_text_files_reports_skip_reasons(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (tmp_path / "big.txt").write_text("x" * 32, encoding="utf-8")
+
+        scan = scan_text_files(["."], root=tmp_path, max_file_bytes=16)
+        reasons = {(item.path, item.reason) for item in scan.skipped}
+
+        self.assertIn((".env", "sensitive path"), reasons)
+        self.assertIn(("image.png", "unsupported file type"), reasons)
+        self.assertIn(("big.txt", "over max file bytes"), reasons)
+
+    def test_audit_show_skipped_prints_skip_table(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello\n", encoding="utf-8")
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["audit", ".", "--root", str(tmp_path), "--show-skipped"])
+
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Skipped before scoring:", rendered)
+        self.assertIn("sensitive path", rendered)
+        self.assertIn(".env", rendered)
+
+    def test_context_pack_summary_includes_skip_reason_counts(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+
+        result = build_context_pack(["."], root=tmp_path, budget_tokens=300)
+
+        self.assertIn("Skipped before scoring: 1 path(s) (sensitive path=1)", result.markdown)
 
 
 class TempDirectory:
