@@ -1,12 +1,16 @@
+import io
 from pathlib import Path
 import unittest
+from contextlib import redirect_stderr
 
+from ai_token_saver.cli import main
 from ai_token_saver.optimizer import compact_text
 from ai_token_saver.packer import build_context_pack
 from ai_token_saver.metrics import analyze_loss
+from ai_token_saver.privacy import is_sensitive_path, redact_sensitive_text
 from ai_token_saver.render import render_text_pages
-from ai_token_saver.selection import make_code_skeleton
-from ai_token_saver.files import TextFile
+from ai_token_saver.selection import ContextChunk, make_code_skeleton, select_chunks
+from ai_token_saver.files import TextFile, iter_text_files
 from ai_token_saver.tokenizer import estimate_tokens
 
 
@@ -130,6 +134,94 @@ class TokenSaverTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(pages), 1)
         self.assertTrue((tmp_path / pages[0].path).exists())
+
+    def test_privacy_redacts_tokens_and_contact_info(self):
+        report = redact_sensitive_text(
+            "api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n"
+            "email=person@example.test\n"
+            "phone=13800138000\n"
+            "gh=gho_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"
+        )
+
+        self.assertGreaterEqual(report.replacements, 4)
+        self.assertNotIn("sk-proj-", report.text)
+        self.assertNotIn("gmail.com", report.text)
+        self.assertNotIn("13800138000", report.text)
+        self.assertIn("<REDACTED:OPENAI_KEY>", report.text)
+
+    def test_sensitive_files_are_skipped_by_default(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("contact person@example.test\n", encoding="utf-8")
+
+        files = list(iter_text_files(["."], root=tmp_path))
+        rel_paths = {item.rel_path for item in files}
+
+        self.assertNotIn(".env", rel_paths)
+        self.assertIn("notes.txt", rel_paths)
+        note = next(item for item in files if item.rel_path == "notes.txt")
+        self.assertIn("<REDACTED:EMAIL>", note.text)
+        self.assertGreater(note.redactions, 0)
+
+    def test_sensitive_path_detector_keeps_examples(self):
+        self.assertTrue(is_sensitive_path(Path(".env")))
+        self.assertTrue(is_sensitive_path(Path("credentials.json")))
+        self.assertTrue(is_sensitive_path(Path("prod-secrets-sample.json")))
+        self.assertFalse(is_sensitive_path(Path(".env.example")))
+        self.assertFalse(is_sensitive_path(Path("README.md")))
+
+    def test_query_matched_short_symbol_chunk_can_be_selected(self):
+        chunk = ContextChunk(
+            path="src/ai_token_saver/privacy.py",
+            suffix=".py",
+            start_line=10,
+            end_line=12,
+            text="def redact_sensitive_text(text):\n    return text\n",
+            kind="code-symbol",
+            tokens=15,
+            score=0.0,
+            fingerprint=frozenset({"redact_sensitive_text", "text"}),
+        )
+
+        selected = select_chunks([chunk], budget_tokens=40, query="privacy redaction")
+
+        self.assertEqual([item.path for item in selected], ["src/ai_token_saver/privacy.py"])
+
+    def test_privacy_redacts_structured_secret_fields(self):
+        report = redact_sensitive_text(
+            '{\n'
+            '  "password": "hunter2",\n'
+            '  "aws_secret_access_key": "abcd1234efgh5678ijkl9012mnop3456"\n'
+            '}\n'
+        )
+
+        self.assertGreaterEqual(report.replacements, 2)
+        self.assertNotIn("hunter2", report.text)
+        self.assertNotIn("abcd1234efgh5678ijkl9012mnop3456", report.text)
+        self.assertIn("<REDACTED:SECRET_VALUE>", report.text)
+
+    def test_trim_refuses_sensitive_path_by_default(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        sensitive = tmp_path / ".netrc"
+        sensitive.write_text("machine example.com login demo password hunter2\n", encoding="utf-8")
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            code = main(["trim", str(sensitive)])
+
+        self.assertEqual(code, 2)
+        self.assertIn("Refusing to trim sensitive path by default", stderr.getvalue())
+
+    def test_rel_path_is_redacted_in_outputs(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        target = tmp_path / "alice@example.test.txt"
+        target.write_text("hello\n", encoding="utf-8")
+
+        files = list(iter_text_files([target.name], root=tmp_path))
+
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].rel_path, "<REDACTED:EMAIL>.txt")
+        self.assertGreater(files[0].redactions, 0)
 
 
 class TempDirectory:
