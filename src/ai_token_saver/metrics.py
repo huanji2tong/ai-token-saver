@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 import re
 
 from .files import iter_text_files
@@ -25,6 +26,8 @@ class LossReport:
     packed_tokens: int
     saved_tokens: int
     saved_percent: float
+    token_growth_tokens: int
+    token_growth_percent: float
     token_retention_percent: float
     token_removal_percent: float
     query_term_recall_percent: float
@@ -37,6 +40,8 @@ class LossReport:
     selected_files: int
     source_chunks: int
     selected_chunks: int
+    skipped_paths: int
+    skip_counts: Mapping[str, int]
 
     def as_dict(self) -> dict[str, float | int]:
         return {
@@ -45,6 +50,8 @@ class LossReport:
             "packed_tokens": self.packed_tokens,
             "saved_tokens": self.saved_tokens,
             "saved_percent": self.saved_percent,
+            "token_growth_tokens": self.token_growth_tokens,
+            "token_growth_percent": self.token_growth_percent,
             "token_retention_percent": self.token_retention_percent,
             "token_removal_percent": self.token_removal_percent,
             "query_term_recall_percent": self.query_term_recall_percent,
@@ -57,6 +64,8 @@ class LossReport:
             "selected_files": self.selected_files,
             "source_chunks": self.source_chunks,
             "selected_chunks": self.selected_chunks,
+            "skipped_paths": self.skipped_paths,
+            "skip_counts": dict(self.skip_counts),
         }
 
 
@@ -99,9 +108,14 @@ def analyze_loss(
     query_recall = _query_recall(source_text, packed_text, query)
     symbol_recall = _set_recall(_symbols(source_text), _symbols(packed_text))
     source_file_paths = {text_file.rel_path for text_file in files}
-    selected_file_paths = {chunk.path for chunk in selected}
+    selected_file_paths = {
+        item.path for item in pack.files if item.status in {"selected", "truncated"}
+    }
     file_coverage = _set_recall(source_file_paths, selected_file_paths)
-    chunk_coverage = len(selected) / len(chunks) if chunks else 1.0
+    selected_chunk_count = len(selected) if selected else sum(
+        max(1, item.chunks) for item in pack.files if item.status == "truncated"
+    )
+    chunk_coverage = selected_chunk_count / len(chunks) if chunks else 1.0
 
     # Weighted toward task evidence, then code navigation safety, then breadth.
     critical_retention = (
@@ -111,13 +125,22 @@ def analyze_loss(
         + min(1.0, chunk_coverage * 3.0) * 0.10
     )
     estimated_loss = max(0.0, 1.0 - critical_retention)
-    token_retention = pack.packed_tokens / pack.source_tokens if pack.source_tokens else 0.0
+    if pack.source_tokens:
+        token_retention = min(1.0, pack.packed_tokens / pack.source_tokens)
+        token_growth_tokens = max(0, pack.packed_tokens - pack.source_tokens)
+        token_growth_percent = (token_growth_tokens / pack.source_tokens) * 100 if token_growth_tokens else 0.0
+    else:
+        token_retention = 0.0
+        token_growth_tokens = 0
+        token_growth_percent = 0.0
 
     return LossReport(
         source_tokens=pack.source_tokens,
         packed_tokens=pack.packed_tokens,
         saved_tokens=pack.saved_tokens,
         saved_percent=pack.saved_percent,
+        token_growth_tokens=token_growth_tokens,
+        token_growth_percent=token_growth_percent,
         token_retention_percent=token_retention * 100,
         token_removal_percent=(1 - token_retention) * 100,
         query_term_recall_percent=query_recall * 100,
@@ -129,7 +152,9 @@ def analyze_loss(
         source_files=len(source_file_paths),
         selected_files=len(selected_file_paths),
         source_chunks=len(chunks),
-        selected_chunks=len(selected),
+        selected_chunks=selected_chunk_count,
+        skipped_paths=len(pack.skipped_paths),
+        skip_counts=_skip_counts(pack.skipped_paths),
     )
 
 
@@ -159,3 +184,11 @@ def _set_recall(source: set[str], packed: set[str]) -> float:
     if not source:
         return 1.0
     return len(source & packed) / len(source)
+
+
+def _skip_counts(skipped_paths: tuple[object, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in skipped_paths:
+        reason = str(getattr(item, "reason"))
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
