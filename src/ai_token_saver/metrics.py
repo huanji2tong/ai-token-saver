@@ -40,6 +40,7 @@ class LossReport:
 
     def as_dict(self) -> dict[str, float | int]:
         return {
+            "eligible_source_tokens": self.source_tokens,
             "source_tokens": self.source_tokens,
             "packed_tokens": self.packed_tokens,
             "saved_tokens": self.saved_tokens,
