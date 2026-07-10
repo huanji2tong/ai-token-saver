@@ -9,7 +9,7 @@ import re
 
 from .files import SkippedPath, scan_text_files
 from .optimizer import compact_text, truncate_to_token_budget
-from .selection import ContextChunk, build_chunks, make_code_skeleton, select_chunks
+from .selection import ContextChunk, build_chunks, extract_terms, make_code_skeleton, select_chunks
 from .tokenizer import estimate_tokens, token_savings
 
 
@@ -189,7 +189,30 @@ def _assemble_markdown(
             backend=backend,
             query=query,
             mode=mode,
+            compact=False,
         )
+        marker = ""
+        summary = _fit_summary(
+            summary,
+            budget_tokens=budget_tokens,
+            source_tokens=source_tokens,
+            packed_tokens=final_tokens,
+            saved_tokens=saved,
+            saved_percent=pct,
+            files=files,
+            skipped_paths=skipped_paths,
+            backend=backend,
+            query=query,
+            mode=mode,
+            model=model,
+        )
+        summary_tokens = estimate_tokens(summary, model=model).tokens
+        if summary_tokens >= budget_tokens:
+            final_markdown = truncate_to_token_budget(summary, budget_tokens, model=model)
+            final_tokens = estimate_tokens(final_markdown, model=model).tokens
+            saved, pct = token_savings(source_tokens, final_tokens)
+            return final_markdown, final_tokens, saved, pct
+
         markdown = summary + marker + body_for_output
         measured_tokens = estimate_tokens(markdown, model=model).tokens
         if measured_tokens == final_tokens and measured_tokens <= budget_tokens:
@@ -201,8 +224,8 @@ def _assemble_markdown(
 
         marker = "\n\n[... context pack body tightened to fit final token budget ...]\n"
         summary_tokens = estimate_tokens(summary + marker, model=model).tokens
-        body_tokens = max(24, budget_tokens - summary_tokens)
-        body_for_output = truncate_to_token_budget(body, body_tokens, model=model)
+        body_tokens = max(0, budget_tokens - summary_tokens)
+        body_for_output = truncate_to_token_budget(body, body_tokens, model=model) if body_tokens else ""
 
     saved, pct = token_savings(source_tokens, final_tokens)
     summary = _summary(
@@ -216,9 +239,60 @@ def _assemble_markdown(
         backend=backend,
         query=query,
         mode=mode,
+        compact=False,
+    )
+    summary = _fit_summary(
+        summary,
+        budget_tokens=budget_tokens,
+        source_tokens=source_tokens,
+        packed_tokens=final_tokens,
+        saved_tokens=saved,
+        saved_percent=pct,
+        files=files,
+        skipped_paths=skipped_paths,
+        backend=backend,
+        query=query,
+        mode=mode,
+        model=model,
     )
     markdown = summary + marker + body_for_output
-    return markdown, estimate_tokens(markdown, model=model).tokens, saved, pct
+    final_markdown = truncate_to_token_budget(markdown, budget_tokens, model=model)
+    final_tokens = estimate_tokens(final_markdown, model=model).tokens
+    saved, pct = token_savings(source_tokens, final_tokens)
+    return final_markdown, final_tokens, saved, pct
+
+
+def _fit_summary(
+    summary: str,
+    *,
+    budget_tokens: int,
+    source_tokens: int,
+    packed_tokens: int,
+    saved_tokens: int,
+    saved_percent: float,
+    files: list[PackedFile],
+    skipped_paths: tuple[SkippedPath, ...],
+    backend: str,
+    query: str,
+    mode: str,
+    model: str | None,
+) -> str:
+    if estimate_tokens(summary, model=model).tokens <= budget_tokens:
+        return summary
+    compact_summary = _summary(
+        budget_tokens=budget_tokens,
+        source_tokens=source_tokens,
+        packed_tokens=packed_tokens,
+        saved_tokens=saved_tokens,
+        saved_percent=saved_percent,
+        files=files,
+        skipped_paths=skipped_paths,
+        backend=backend,
+        query=query,
+        mode=mode,
+        compact=True,
+    )
+    return compact_summary
 
 
 def _summary(
@@ -233,10 +307,12 @@ def _summary(
     backend: str,
     query: str,
     mode: str,
+    compact: bool,
 ) -> str:
     selected = sum(1 for item in files if item.status == "selected")
     truncated = sum(1 for item in files if item.status == "truncated")
     skipped = sum(1 for item in files if item.status == "skipped")
+    query_terms = len(set(extract_terms(query)))
     rows = [
         "# AI Token Saver Context Pack",
         "",
@@ -246,13 +322,19 @@ def _summary(
         f"- Estimated savings: {saved_tokens:,} tokens ({saved_percent:.1f}%)",
         f"- Counter: {backend}",
         f"- Strategy: evidence-first/{mode}",
-        f"- Query: {query or '(none; structure-only scoring)'}",
+        (
+            f"- Query-guided scoring: yes ({query_terms} extracted term(s))"
+            if query_terms
+            else "- Query-guided scoring: no (structure-only scoring)"
+        ),
         f"- Files: {selected} selected, {truncated} truncated, {skipped} skipped",
     ]
     if skipped_paths:
         counts = Counter(item.reason for item in skipped_paths)
         reasons = ", ".join(f"{reason}={counts[reason]}" for reason in sorted(counts))
         rows.append(f"- Skipped before scoring: {len(skipped_paths)} path(s) ({reasons})")
+    if compact:
+        return "\n".join(rows) + "\n"
     rows.extend(
         [
             "",
