@@ -8,6 +8,7 @@ from pathlib import Path
 import textwrap
 
 from .packer import build_context_pack
+from .selection import extract_terms
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,8 @@ def build_shotpack(
         "text_saved_percent": pack.saved_percent,
         "skipped_paths": len(pack.skipped_paths),
         "skip_counts": _skip_counts(pack.skipped_paths),
-        "query": query,
+        "query_used": bool(query.strip()),
+        "query_terms": len(set(extract_terms(query))),
         "mode": mode,
         "loss_note": (
             "PNG pages are for visual/context reading. Keep the markdown pack for exact "
