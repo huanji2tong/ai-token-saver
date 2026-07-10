@@ -260,6 +260,57 @@ class TokenSaverTests(unittest.TestCase):
 
         self.assertIn("Skipped before scoring: 1 path(s) (sensitive path=1)", result.markdown)
 
+    def test_measure_reports_skip_counts(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+
+        report = analyze_loss(["."], root=tmp_path, budget_tokens=300)
+
+        self.assertEqual(report.skipped_paths, 1)
+        self.assertEqual(dict(report.skip_counts), {"sensitive path": 1})
+
+    def test_measure_json_includes_skip_counts(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["measure", ".", "--root", str(tmp_path), "--budget", "300", "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('"skipped_paths": 1', stdout.getvalue())
+        self.assertIn('"skip_counts": {', stdout.getvalue())
+
+    def test_measure_clamps_small_input_percentages_and_reports_growth(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+
+        report = analyze_loss(["."], root=tmp_path, budget_tokens=300)
+
+        self.assertGreater(report.token_growth_tokens, 0)
+        self.assertGreater(report.token_growth_percent, 0.0)
+        self.assertEqual(report.token_removal_percent, 0.0)
+        self.assertEqual(report.token_retention_percent, 100.0)
+        self.assertEqual(report.selected_files, 1)
+        self.assertEqual(report.selected_chunks, 1)
+
+    def test_measure_human_output_reports_growth_and_skip_counts(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["measure", ".", "--root", str(tmp_path), "--budget", "300"])
+
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Net growth:", rendered)
+        self.assertIn("Skipped before scoring: 1 path(s) [sensitive path=1]", rendered)
+
 
 class TempDirectory:
     def __enter__(self) -> str:
