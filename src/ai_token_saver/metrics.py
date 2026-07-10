@@ -103,7 +103,7 @@ def analyze_loss(
     body_budget = max(120, budget_tokens - min(1000, max(300, budget_tokens // 5)))
     selected = select_chunks(chunks, budget_tokens=body_budget, query=query, mode=mode)
     source_text = "\n".join(source_text_parts)
-    packed_text = pack.markdown
+    packed_text = pack.body_markdown
 
     query_recall = _query_recall(source_text, packed_text, query)
     symbol_recall = _set_recall(_symbols(source_text), _symbols(packed_text))
