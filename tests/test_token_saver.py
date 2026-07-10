@@ -311,6 +311,29 @@ class TokenSaverTests(unittest.TestCase):
         self.assertIn("Net growth:", rendered)
         self.assertIn("Skipped before scoring: 1 path(s) [sensitive path=1]", rendered)
 
+    def test_measure_empty_dir_reports_summary_growth_not_fake_removal(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+
+        report = analyze_loss(["."], root=tmp_path, budget_tokens=300)
+
+        self.assertEqual(report.source_tokens, 0)
+        self.assertGreater(report.token_growth_tokens, 0)
+        self.assertEqual(report.token_removal_percent, 0.0)
+        self.assertEqual(report.token_retention_percent, 0.0)
+
+    def test_measure_empty_dir_human_output_explains_growth_basis(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["measure", ".", "--root", str(tmp_path), "--budget", "300"])
+
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Net growth:", rendered)
+        self.assertIn("source empty; summary-only output", rendered)
+        self.assertIn("Token removal: 0.0%", rendered)
+
 
 class TempDirectory:
     def __enter__(self) -> str:
