@@ -56,6 +56,8 @@ By default it will:
   including common API key formats, bearer tokens, email addresses, phone
   numbers, URL passwords, and quoted or unquoted config assignments such as
   `"password": "..."` or `aws_secret_access_key=...`,
+- use query text for scoring without persisting the raw query string into the
+  generated pack or shotpack manifest,
 - keep redaction local and deterministic; it does not call any external API to
   classify content.
 
@@ -195,18 +197,18 @@ ai-token-saver measure . \
 the current result is:
 
 ```text
-Eligible source: 27,898 tokens
-Pack: 2,846 tokens
-Saved: 25,052 tokens (89.8%)
-Token removal: 89.8%
-Token retention: 10.2%
+Eligible source: 28,658 tokens
+Pack: 2,807 tokens
+Saved: 25,851 tokens (90.2%)
+Token removal: 90.2%
+Token retention: 9.8%
 Query-term recall: 100.0%
 Code-symbol recall: 100.0%
-File coverage: 16/17 (94.1%)
-Chunk coverage: 43/212 (20.3%)
-Skipped before scoring: 163 path(s) [ignore list=162, sensitive path=1]
-Critical retention proxy: 95.2%
-Estimated loss proxy: 4.8%
+File coverage: 15/17 (88.2%)
+Chunk coverage: 43/217 (19.8%)
+Skipped before scoring: 174 path(s) [ignore list=173, sensitive path=1]
+Critical retention proxy: 94.2%
+Estimated loss proxy: 5.8%
 ```
 
 These are proxy metrics, not a guarantee of final answer quality. They are meant
@@ -232,7 +234,7 @@ model-dependent and can silently misread characters.
 
 ```text
 Wrote context-pack.md
-Eligible source: 27,898 tokens | Pack: 2,846 tokens | Saved: 25,052 (89.8%)
+Eligible source: 28,658 tokens | Pack: 2,807 tokens | Saved: 25,851 (90.2%)
 Files: 17 | Counter: heuristic
 ```
 
