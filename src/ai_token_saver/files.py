@@ -73,67 +73,133 @@ class TextFile:
     redactions: int = 0
 
 
+@dataclass(frozen=True)
+class SkippedPath:
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    files: tuple[TextFile, ...]
+    skipped: tuple[SkippedPath, ...]
+
+
 def iter_text_files(
     paths: Iterable[str],
     *,
     root: Path,
     max_file_bytes: int = 200_000,
 ) -> Iterator[TextFile]:
+    yield from scan_text_files(paths, root=root, max_file_bytes=max_file_bytes).files
+
+
+def scan_text_files(
+    paths: Iterable[str],
+    *,
+    root: Path,
+    max_file_bytes: int = 200_000,
+) -> ScanResult:
     root = root.resolve()
+    files: list[TextFile] = []
+    skipped: list[SkippedPath] = []
     for raw_path in paths:
         path = (root / raw_path).resolve() if raw_path != "-" else Path("-")
         if raw_path == "-":
             continue
         if path.is_dir():
-            yield from _walk_dir(path, root=root, max_file_bytes=max_file_bytes)
+            for item in sorted(path.rglob("*")):
+                if not item.is_file():
+                    continue
+                text_file, skipped_path = _scan_candidate(
+                    item,
+                    root=root,
+                    max_file_bytes=max_file_bytes,
+                    require_known_suffix=True,
+                )
+                if text_file:
+                    files.append(text_file)
+                elif skipped_path:
+                    skipped.append(skipped_path)
         elif path.is_file():
-            text_file = read_text_file(path, root=root, max_file_bytes=max_file_bytes)
+            text_file, skipped_path = _scan_candidate(
+                path,
+                root=root,
+                max_file_bytes=max_file_bytes,
+                require_known_suffix=False,
+            )
             if text_file:
-                yield text_file
+                files.append(text_file)
+            elif skipped_path:
+                skipped.append(skipped_path)
+    return ScanResult(files=tuple(files), skipped=tuple(skipped))
 
 
 def read_text_file(path: Path, *, root: Path, max_file_bytes: int) -> TextFile | None:
-    if _should_ignore(path):
-        return None
+    text_file, _ = _scan_candidate(
+        path,
+        root=root,
+        max_file_bytes=max_file_bytes,
+        require_known_suffix=False,
+    )
+    return text_file
+
+
+def _should_ignore(path: Path) -> bool:
+    return _ignore_reason(path) is not None
+
+
+def _scan_candidate(
+    path: Path,
+    *,
+    root: Path,
+    max_file_bytes: int,
+    require_known_suffix: bool,
+) -> tuple[TextFile | None, SkippedPath | None]:
+    ignore_reason = _ignore_reason(path)
+    if ignore_reason:
+        return None, _make_skipped(path, root=root, reason=ignore_reason)
+    if require_known_suffix and path.suffix and path.suffix.lower() not in TEXT_SUFFIXES:
+        return None, _make_skipped(path, root=root, reason="unsupported file type")
     if path.stat().st_size > max_file_bytes:
-        return None
+        return None, _make_skipped(path, root=root, reason="over max file bytes")
+
     raw = path.read_bytes()
     if b"\x00" in raw:
-        return None
+        return None, _make_skipped(path, root=root, reason="binary file")
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         try:
             text = raw.decode("latin-1")
         except UnicodeDecodeError:
-            return None
+            return None, _make_skipped(path, root=root, reason="unreadable text encoding")
 
     redaction = redact_sensitive_text(text)
     rel_path_report = redact_path_text(_safe_relative(path, root))
-    return TextFile(
-        path=path,
-        rel_path=rel_path_report.text,
-        text=redaction.text,
-        bytes_read=len(raw),
-        redactions=redaction.replacements + rel_path_report.replacements,
+    return (
+        TextFile(
+            path=path,
+            rel_path=rel_path_report.text,
+            text=redaction.text,
+            bytes_read=len(raw),
+            redactions=redaction.replacements + rel_path_report.replacements,
+        ),
+        None,
     )
 
 
-def _walk_dir(path: Path, *, root: Path, max_file_bytes: int) -> Iterator[TextFile]:
-    for item in sorted(path.rglob("*")):
-        if not item.is_file() or _should_ignore(item):
-            continue
-        if item.suffix and item.suffix.lower() not in TEXT_SUFFIXES:
-            continue
-        text_file = read_text_file(item, root=root, max_file_bytes=max_file_bytes)
-        if text_file:
-            yield text_file
-
-
-def _should_ignore(path: Path) -> bool:
+def _ignore_reason(path: Path) -> str | None:
     if any(part in DEFAULT_IGNORES or part.endswith(".egg-info") for part in path.parts):
-        return True
-    return is_sensitive_path(path)
+        return "ignore list"
+    if is_sensitive_path(path):
+        return "sensitive path"
+    return None
+
+
+def _make_skipped(path: Path, *, root: Path, reason: str) -> SkippedPath:
+    rel_path_report = redact_path_text(_safe_relative(path, root))
+    return SkippedPath(path=rel_path_report.text, reason=reason)
 
 
 def _safe_relative(path: Path, root: Path) -> str:
