@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from .files import iter_text_files
+from .files import scan_text_files
 from .metrics import analyze_loss
 from .optimizer import compact_text
 from .packer import build_context_pack
@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--budget", type=int, default=8000, help="Reference token budget.")
     audit.add_argument("--max-file-bytes", type=int, default=200_000, help="Skip files larger than this.")
     audit.add_argument("--price-per-million", type=float, default=1.0, help="Input token price for cost estimate.")
+    audit.add_argument("--show-skipped", action="store_true", help="Show skipped paths and skip reasons.")
     audit.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     audit.set_defaults(func=_cmd_audit)
 
@@ -100,12 +101,13 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_audit(args: argparse.Namespace) -> int:
     root = Path(args.root)
+    scan = scan_text_files(args.paths, root=root, max_file_bytes=args.max_file_bytes)
     rows = []
     total_raw = 0
     total_compact = 0
     total_redactions = 0
 
-    for text_file in iter_text_files(args.paths, root=root, max_file_bytes=args.max_file_bytes):
+    for text_file in scan.files:
         raw = estimate_tokens(text_file.text, model=args.model)
         compacted = compact_text(text_file.text, model=args.model)
         saved, pct = token_savings(raw.tokens, compacted.compact_tokens)
@@ -139,6 +141,8 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         "estimated_raw_cost": total_raw / 1_000_000 * args.price_per_million,
         "estimated_compact_cost": total_compact / 1_000_000 * args.price_per_million,
         "redactions": total_redactions,
+        "skip_counts": _skip_counts(scan.skipped),
+        "skipped_paths": [item.__dict__ for item in scan.skipped],
         "files": rows,
     }
 
@@ -153,12 +157,19 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         f"${report['estimated_raw_cost']:.4f} -> ${report['estimated_compact_cost']:.4f} "
         f"at ${args.price_per_million:g}/1M tokens"
     )
+    if scan.skipped:
+        print(f"Skipped before scoring: {len(scan.skipped)} path(s) [{_format_skip_counts(scan.skipped)}]")
     if total_redactions:
         print(f"Privacy filter redacted {total_redactions} secret/PII match(es).")
     print()
     print(_table(rows[:30]))
     if len(rows) > 30:
         print(f"\nShowing top 30 of {len(rows)} files by eligible token count.")
+    if args.show_skipped and scan.skipped:
+        print()
+        print(_skip_table(list(scan.skipped)[:30]))
+        if len(scan.skipped) > 30:
+            print(f"\nShowing top 30 of {len(scan.skipped)} skipped paths.")
     return 0
 
 
@@ -320,6 +331,34 @@ def _table(rows: list[dict[str, object]]) -> str:
     lines = []
     for index, item in enumerate(rendered):
         line = "  ".join(value.rjust(widths[pos]) if pos < 3 else value for pos, value in enumerate(item))
+        lines.append(line)
+        if index == 0:
+            lines.append("  ".join("-" * width for width in widths))
+    return "\n".join(lines)
+
+
+def _skip_counts(skipped: tuple[object, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in skipped:
+        reason = str(getattr(item, "reason"))
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _format_skip_counts(skipped: tuple[object, ...]) -> str:
+    counts = _skip_counts(skipped)
+    return ", ".join(f"{reason}={counts[reason]}" for reason in sorted(counts))
+
+
+def _skip_table(rows: list[object]) -> str:
+    headers = ("reason", "file")
+    rendered = [headers]
+    for row in rows:
+        rendered.append((str(getattr(row, "reason")), str(getattr(row, "path"))))
+    widths = [max(len(item[index]) for item in rendered) for index in range(len(headers))]
+    lines = []
+    for index, item in enumerate(rendered):
+        line = "  ".join(value.ljust(widths[pos]) for pos, value in enumerate(item))
         lines.append(line)
         if index == 0:
             lines.append("  ".join("-" * width for width in widths))
