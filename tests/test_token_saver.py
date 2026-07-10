@@ -354,6 +354,44 @@ class TokenSaverTests(unittest.TestCase):
 
         self.assertEqual(report.query_term_recall_percent, 0.0)
 
+    def test_body_markdown_tracks_budget_tightened_output(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        payload = []
+        for index in range(40):
+            payload.append(
+                f"## Section {index}\n"
+                f"VERY_RELEVANT_NEEDLE_{index} evidence budget token extra extra extra extra extra\n"
+            )
+        (tmp_path / "big.md").write_text("\n".join(payload), encoding="utf-8")
+
+        pack = build_context_pack(
+            ["."],
+            root=tmp_path,
+            budget_tokens=220,
+            query="VERY_RELEVANT_NEEDLE_38 VERY_RELEVANT_NEEDLE_39 evidence budget token",
+        )
+
+        self.assertEqual(pack.body_markdown, "[... omitted: token budget too small ...]\n")
+
+    def test_measure_query_recall_uses_budget_tightened_body(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        payload = []
+        for index in range(40):
+            payload.append(
+                f"## Section {index}\n"
+                f"VERY_RELEVANT_NEEDLE_{index} evidence budget token extra extra extra extra extra\n"
+            )
+        (tmp_path / "big.md").write_text("\n".join(payload), encoding="utf-8")
+
+        report = analyze_loss(
+            ["."],
+            root=tmp_path,
+            budget_tokens=220,
+            query="VERY_RELEVANT_NEEDLE_38 VERY_RELEVANT_NEEDLE_39 evidence budget token",
+        )
+
+        self.assertLess(report.query_term_recall_percent, 100.0)
+
     def test_measure_empty_dir_reports_summary_growth_not_fake_removal(self):
         tmp_path = Path(self.enterContext(TempDirectory()))
 
