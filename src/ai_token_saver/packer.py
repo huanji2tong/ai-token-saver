@@ -60,7 +60,8 @@ def build_context_pack(
     preamble = (
         "# AI Token Saver Context Pack\n\n"
         "This pack was generated locally. It removes duplicate/log noise and keeps "
-        "content inside the requested token budget.\n\n"
+        "content inside the requested token budget. Sensitive files are skipped "
+        "by default and secret-like values are redacted.\n\n"
     )
     raw_by_path: dict[str, int] = {}
     all_chunks: list[ContextChunk] = []
@@ -232,7 +233,7 @@ def _summary(
         "# AI Token Saver Context Pack",
         "",
         f"- Budget: {budget_tokens:,} tokens",
-        f"- Raw source estimate: {source_tokens:,} tokens",
+        f"- Eligible source estimate: {source_tokens:,} tokens",
         f"- Packed estimate: {packed_tokens:,} tokens",
         f"- Estimated savings: {saved_tokens:,} tokens ({saved_percent:.1f}%)",
         f"- Counter: {backend}",
@@ -242,7 +243,7 @@ def _summary(
         "",
         "## File Index",
         "",
-        "| file | status | chunks | raw tokens | packed tokens | notes |",
+        "| file | status | chunks | eligible tokens | packed tokens | notes |",
         "| --- | --- | ---: | ---: | ---: | --- |",
     ]
     for item in files:
