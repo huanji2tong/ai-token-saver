@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-token-saver"
-version = "0.4.1"
+version = "0.4.2"
 description = "A local CLI for privacy-safe, evidence-first AI context compression under a token budget."
 readme = "README.md"
 requires-python = ">=3.9"
