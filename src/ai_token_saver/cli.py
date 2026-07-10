@@ -271,7 +271,10 @@ def _cmd_measure(args: argparse.Namespace) -> int:
     print(f"Pack: {report.packed_tokens:,} tokens")
     print(f"Saved: {report.saved_tokens:,} tokens ({report.saved_percent:.1f}%)")
     if report.token_growth_tokens:
-        print(f"Net growth: {report.token_growth_tokens:,} tokens ({report.token_growth_percent:.1f}%)")
+        if report.source_tokens:
+            print(f"Net growth: {report.token_growth_tokens:,} tokens ({report.token_growth_percent:.1f}%)")
+        else:
+            print(f"Net growth: {report.token_growth_tokens:,} tokens (source empty; summary-only output)")
     print(f"Token removal: {report.token_removal_percent:.1f}%")
     print(f"Token retention: {report.token_retention_percent:.1f}%")
     print(f"Query-term recall: {report.query_term_recall_percent:.1f}%")
