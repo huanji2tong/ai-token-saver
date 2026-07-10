@@ -3,7 +3,8 @@
 AI Token Saver is a local CLI that helps developers spend fewer AI tokens before
 they paste code, logs, or project context into an LLM.
 
-Version 0.3 adds an evidence-first packing engine. Instead of blindly packing
+Version 0.4 adds privacy-safe defaults on top of the evidence-first packing
+engine. Instead of blindly packing
 whole files and trimming from the middle, it splits files into structural chunks,
 scores them by evidence value, removes near-duplicates, adds compact code
 skeletons, fills the token budget with the highest-value context, and can render
@@ -17,6 +18,7 @@ It does four practical things:
 - Builds an evidence-ranked markdown context pack that fits a token budget.
 - Reports loss proxy metrics so savings do not hide missing evidence.
 - Optionally renders a screenshot pack for image-capable models.
+- Skips sensitive files and redacts secret-like values by default.
 
 No API key is required. The default counter is heuristic, and you can install the
 optional `tiktoken` extra when you want model-aware estimates.
@@ -39,6 +41,27 @@ Optional screenshot pack rendering:
 python -m pip install -e ".[image]"
 ```
 
+## Privacy Defaults
+
+AI Token Saver now assumes your workspace may contain secrets and personal data.
+
+By default it will:
+
+- skip sensitive paths such as `.env`, `.netrc`, `.git-credentials`, SSH key
+  files, private key files, credentials-like filenames, and most hidden files
+  or directories unless they are on a small allowlist of common repo metadata,
+- refuse direct `trim` reads from sensitive paths unless you explicitly pass
+  `--allow-sensitive-path`,
+- redact secret-like values in remaining text and displayed file paths,
+  including common API key formats, bearer tokens, email addresses, phone
+  numbers, URL passwords, and quoted or unquoted config assignments such as
+  `"password": "..."` or `aws_secret_access_key=...`,
+- keep redaction local and deterministic; it does not call any external API to
+  classify content.
+
+For direct `trim` usage, redaction is also on by default. Use `--no-redact`
+only when you intentionally want exact raw text.
+
 ## Quick Start
 
 Audit the current project:
@@ -46,6 +69,10 @@ Audit the current project:
 ```bash
 ai-token-saver audit .
 ```
+
+The audit report will tell you if the privacy filter redacted any matches. Its
+`Eligible source` counts refer to the privacy-filtered input set, not a raw dump
+of every byte on disk.
 
 Compact a noisy log:
 
@@ -99,6 +126,9 @@ ai-token-saver shotpack . \
   --mode aggressive \
   -o shotpack
 ```
+
+`shotpack` defaults to `--mode aggressive` because screenshot pages benefit from
+denser pruning than the plain markdown pack.
 
 Use a custom token price to estimate input cost:
 
@@ -162,22 +192,30 @@ ai-token-saver measure . \
 the current result is:
 
 ```text
-Raw: 23,502 tokens
-Pack: 2,804 tokens
-Saved: 20,698 tokens (88.1%)
-Token removal: 88.1%
-Token retention: 11.9%
+Eligible source: 25,506 tokens
+Pack: 2,806 tokens
+Saved: 22,700 tokens (89.0%)
+Token removal: 89.0%
+Token retention: 11.0%
 Query-term recall: 100.0%
 Code-symbol recall: 100.0%
-File coverage: 15/17 (88.2%)
-Chunk coverage: 43/190 (22.6%)
-Critical retention proxy: 95.0%
-Estimated loss proxy: 5.0%
+File coverage: 16/17 (94.1%)
+Chunk coverage: 43/196 (21.9%)
+Critical retention proxy: 95.7%
+Estimated loss proxy: 4.3%
 ```
 
 These are proxy metrics, not a guarantee of final answer quality. They are meant
 to catch obvious compression failures: missing query terms, missing code symbols,
 or overly narrow file coverage.
+
+## Privacy Caveat
+
+Redaction is pattern-based, not perfect DLP. It is good at avoiding accidental
+exposure of obvious secrets and personal identifiers, but it cannot guarantee
+that every sensitive business value, proprietary identifier, or model-specific
+prompt secret will be caught. You should still review output before sharing it
+outside your machine.
 
 ## Screenshot Pack Caveat
 
@@ -190,7 +228,7 @@ model-dependent and can silently misread characters.
 
 ```text
 Wrote context-pack.md
-Raw: 23,502 tokens | Pack: 2,804 tokens | Saved: 20,698 (88.1%)
+Eligible source: 25,506 tokens | Pack: 2,806 tokens | Saved: 22,700 (89.0%)
 Files: 17 | Counter: heuristic
 ```
 
@@ -198,7 +236,7 @@ Files: 17 | Counter: heuristic
 
 ### `audit`
 
-Estimate raw and compacted token usage for files or directories.
+Estimate privacy-filtered eligible and compacted token usage for files or directories.
 
 ```bash
 ai-token-saver audit src README.md --budget 12000 --json
@@ -211,6 +249,10 @@ Compact one text file or stdin.
 ```bash
 cat server.log | ai-token-saver trim - > smaller-log.txt
 ```
+
+By default, `trim` refuses named sensitive paths such as `.netrc`, `.npmrc`,
+private keys, and credentials files. Use `--allow-sensitive-path` only when you
+intentionally want to process one.
 
 Extractive mode keeps the most relevant chunks under a budget:
 
@@ -246,7 +288,8 @@ ai-token-saver measure . \
 
 ### `shotpack`
 
-Generate a markdown context pack plus PNG pages.
+Generate a markdown context pack plus PNG pages. The default mode is
+`aggressive`.
 
 ```bash
 ai-token-saver shotpack . \
@@ -259,8 +302,11 @@ ai-token-saver shotpack . \
 ## What Gets Ignored
 
 The scanner skips common heavy folders such as `.git`, `node_modules`, `dist`,
-`build`, `.venv`, caches, and binary files. Individual files larger than 200 KB
-are skipped by default; change that with `--max-file-bytes`.
+`build`, `.venv`, caches, and binary files. It also skips sensitive paths such
+as `.env`, private keys, credentials files, and most hidden paths unless they
+are part of the built-in allowlist. Displayed file paths are redacted when they
+contain email addresses, phone numbers, or token-like strings. Individual files
+larger than 200 KB are skipped by default; change that with `--max-file-bytes`.
 
 ## Development
 
