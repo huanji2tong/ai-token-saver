@@ -195,17 +195,18 @@ ai-token-saver measure . \
 the current result is:
 
 ```text
-Eligible source: 25,506 tokens
-Pack: 2,806 tokens
-Saved: 22,700 tokens (89.0%)
-Token removal: 89.0%
-Token retention: 11.0%
+Eligible source: 27,898 tokens
+Pack: 2,846 tokens
+Saved: 25,052 tokens (89.8%)
+Token removal: 89.8%
+Token retention: 10.2%
 Query-term recall: 100.0%
 Code-symbol recall: 100.0%
 File coverage: 16/17 (94.1%)
-Chunk coverage: 43/196 (21.9%)
-Critical retention proxy: 95.7%
-Estimated loss proxy: 4.3%
+Chunk coverage: 43/212 (20.3%)
+Skipped before scoring: 163 path(s) [ignore list=162, sensitive path=1]
+Critical retention proxy: 95.2%
+Estimated loss proxy: 4.8%
 ```
 
 These are proxy metrics, not a guarantee of final answer quality. They are meant
@@ -231,7 +232,7 @@ model-dependent and can silently misread characters.
 
 ```text
 Wrote context-pack.md
-Eligible source: 25,506 tokens | Pack: 2,806 tokens | Saved: 22,700 (89.0%)
+Eligible source: 27,898 tokens | Pack: 2,846 tokens | Saved: 25,052 (89.8%)
 Files: 17 | Counter: heuristic
 ```
 
@@ -295,7 +296,8 @@ ai-token-saver measure . \
 `measure` now reports how many paths were skipped before scoring and why, so
 coverage drops are easier to interpret. When a tiny input grows because pack
 overhead dominates, `measure` reports that as net growth instead of emitting
-impossible negative removal percentages.
+impossible negative removal percentages. Empty inputs are called out as
+summary-only growth instead of fake 100% removal.
 
 ### `shotpack`
 
