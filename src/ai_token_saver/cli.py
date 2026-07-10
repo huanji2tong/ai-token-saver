@@ -270,12 +270,16 @@ def _cmd_measure(args: argparse.Namespace) -> int:
     print(f"Eligible source: {report.source_tokens:,} tokens")
     print(f"Pack: {report.packed_tokens:,} tokens")
     print(f"Saved: {report.saved_tokens:,} tokens ({report.saved_percent:.1f}%)")
+    if report.token_growth_tokens:
+        print(f"Net growth: {report.token_growth_tokens:,} tokens ({report.token_growth_percent:.1f}%)")
     print(f"Token removal: {report.token_removal_percent:.1f}%")
     print(f"Token retention: {report.token_retention_percent:.1f}%")
     print(f"Query-term recall: {report.query_term_recall_percent:.1f}%")
     print(f"Code-symbol recall: {report.symbol_recall_percent:.1f}%")
     print(f"File coverage: {report.selected_files}/{report.source_files} ({report.file_coverage_percent:.1f}%)")
     print(f"Chunk coverage: {report.selected_chunks}/{report.source_chunks} ({report.chunk_coverage_percent:.1f}%)")
+    if report.skipped_paths:
+        print(f"Skipped before scoring: {report.skipped_paths} path(s) [{_format_counts(report.skip_counts)}]")
     print(f"Critical retention proxy: {report.critical_retention_percent:.1f}%")
     print(f"Estimated loss proxy: {report.estimated_loss_percent:.1f}%")
     return 0
@@ -309,6 +313,8 @@ def _cmd_shotpack(args: argparse.Namespace) -> int:
         f"Eligible source stage: {result.source_tokens:,} -> {result.text_pack_tokens:,} tokens "
         f"({result.text_saved_percent:.1f}% saved before screenshot rendering)"
     )
+    if result.skipped_paths:
+        print(f"Skipped before scoring: {result.skipped_paths} path(s) [{_format_counts(result.skip_counts)}]")
     print("Use PNG pages for visual bulk context; keep the markdown for exact strings/code.")
     return 0
 
@@ -347,6 +353,11 @@ def _skip_counts(skipped: tuple[object, ...]) -> dict[str, int]:
 
 def _format_skip_counts(skipped: tuple[object, ...]) -> str:
     counts = _skip_counts(skipped)
+    return _format_counts(counts)
+
+
+def _format_counts(counts: dict[str, int] | object) -> str:
+    counts = dict(counts)
     return ", ".join(f"{reason}={counts[reason]}" for reason in sorted(counts))
 
 
