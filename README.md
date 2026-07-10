@@ -74,6 +74,9 @@ The audit report will tell you if the privacy filter redacted any matches. Its
 `Eligible source` counts refer to the privacy-filtered input set, not a raw dump
 of every byte on disk.
 
+When you need visibility into what was excluded before scoring, add
+`--show-skipped` to print skipped paths and their reasons.
+
 Compact a noisy log:
 
 ```bash
@@ -241,6 +244,9 @@ Estimate privacy-filtered eligible and compacted token usage for files or direct
 ```bash
 ai-token-saver audit src README.md --budget 12000 --json
 ```
+
+Use `--show-skipped` when you want to inspect paths excluded by ignore rules,
+sensitive-path guards, file-size limits, or unsupported file types.
 
 ### `trim`
 
