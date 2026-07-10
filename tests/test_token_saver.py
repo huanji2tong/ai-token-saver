@@ -1,4 +1,5 @@
 import io
+import json
 from pathlib import Path
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -260,6 +261,32 @@ class TokenSaverTests(unittest.TestCase):
 
         self.assertIn("Skipped before scoring: 1 path(s) (sensitive path=1)", result.markdown)
 
+    def test_context_pack_respects_tiny_budget(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / "a.txt").write_text("small one\n", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("VERY_RELEVANT_NEEDLE evidence budget token\n", encoding="utf-8")
+
+        result = build_context_pack(
+            ["."],
+            root=tmp_path,
+            budget_tokens=120,
+            query="VERY_RELEVANT_NEEDLE evidence budget token",
+        )
+
+        self.assertLessEqual(result.packed_tokens, 120)
+        self.assertLessEqual(estimate_tokens(result.markdown).tokens, 120)
+
+    def test_query_text_is_not_persisted_in_pack_summary(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+        query = "debug sk-proj-abcdefghijklmnopqrstuvwxyz123456 for person@example.test"
+
+        result = build_context_pack(["."], root=tmp_path, budget_tokens=300, query=query)
+
+        self.assertNotIn("sk-proj-", result.markdown)
+        self.assertNotIn("person@example.test", result.markdown)
+        self.assertIn("Query-guided scoring: yes", result.markdown)
+
     def test_measure_reports_skip_counts(self):
         tmp_path = Path(self.enterContext(TempDirectory()))
         (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
@@ -311,6 +338,20 @@ class TokenSaverTests(unittest.TestCase):
         self.assertIn("Net growth:", rendered)
         self.assertIn("Skipped before scoring: 1 path(s) [sensitive path=1]", rendered)
 
+    def test_measure_query_recall_is_not_inflated_by_summary_query_echo(self):
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        (tmp_path / "a.txt").write_text("small one\n", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("VERY_RELEVANT_NEEDLE evidence budget token\n", encoding="utf-8")
+
+        report = analyze_loss(
+            ["."],
+            root=tmp_path,
+            budget_tokens=120,
+            query="VERY_RELEVANT_NEEDLE evidence budget token",
+        )
+
+        self.assertLess(report.query_term_recall_percent, 100.0)
+
     def test_measure_empty_dir_reports_summary_growth_not_fake_removal(self):
         tmp_path = Path(self.enterContext(TempDirectory()))
 
@@ -333,6 +374,26 @@ class TokenSaverTests(unittest.TestCase):
         self.assertIn("Net growth:", rendered)
         self.assertIn("source empty; summary-only output", rendered)
         self.assertIn("Token removal: 0.0%", rendered)
+
+    def test_shotpack_manifest_does_not_persist_raw_query(self):
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            self.skipTest("Pillow is not installed")
+
+        tmp_path = Path(self.enterContext(TempDirectory()))
+        out = tmp_path / "out"
+        (tmp_path / "notes.txt").write_text("hello token budget\n", encoding="utf-8")
+        query = "debug sk-proj-abcdefghijklmnopqrstuvwxyz123456 for person@example.test"
+
+        from ai_token_saver.render import build_shotpack
+
+        build_shotpack(["."], root=tmp_path, output_dir=out, budget_tokens=300, query=query)
+        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+
+        self.assertNotIn("query", manifest)
+        self.assertTrue(manifest["query_used"])
+        self.assertGreater(manifest["query_terms"], 0)
 
 
 class TempDirectory:
